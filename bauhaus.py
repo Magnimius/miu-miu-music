@@ -31,7 +31,25 @@ def draw_prism_edges(img, left_points, right_points):
     for p1, p2 in zip(left_points, right_points):
         p1 = tuple(p1.astype(int))
         p2 = tuple(p2.astype(int))
-        cv2.line(img, p1, p2, color=(0, 255, 0), thickness=2)
+        cv2.line(img, p1, p2, color=(0, 0, 0), thickness=1)
+    return img
+
+def apply_halftone(img, hull, grid_size=10):
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [hull], 255)
+    grey_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    halftone_layer = np.zeros(img.shape, dtype=np.uint8)
+    halftone_layer[:] = [139, 90, 20]
+
+    for y in range(0, img.shape[0], grid_size):
+        for x in range(0, img.shape[1], grid_size):
+            if mask[y, x] > 0:
+                brightness = grey_img[y, x]
+                max_radius = grid_size//2
+                dot_radius = int((255-brightness) / 255*max_radius)
+                cv2.circle(halftone_layer, (x, y), dot_radius, (18, 120, 30), -1)
+    mask_3ch = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    img = np.where(mask_3ch > 0, halftone_layer, img)
     return img
 
 
@@ -50,8 +68,9 @@ while True:
     if len(left) > 0 and len(right) > 0:
         left_points = get_fingertip_points(left)
         right_points = get_fingertip_points(right)
-        img = draw_prism(img, left, right)
-        img = draw_prism_edges(img, left_points, right_points)
+        hull = get_prism_hull(left_points, right_points)
+        img = apply_halftone(img, hull)
+        #img = draw_prism_edges(img, left_points, right_points)
 
     cv2.imshow("Arthouse", img)
     if cv2.waitKey(1) & 0xFF == ord('q'):
