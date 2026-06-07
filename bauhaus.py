@@ -4,18 +4,24 @@ import handtrackmod as htm
 import time
 import threading
 
-FILTERS = ['halftone', 'bitmap']
+FILTERS = ['halftone', 'bitmap', 'ascii', 'glitch']
 current_filter=0
 last_wink_time = 0
 WINK_COOLDOWN = 1
 
+# -- APPLY FILTERS
 def apply_filter(img, hull, mode):
     if mode == 'halftone':
         img = apply_halftone(img, hull)
     if mode == 'bitmap':
         img = apply_bitmap(img, hull)
-        
+    if mode == 'ascii':
+        img = apply_ascii(img, hull)
+    if mode == 'glitch':
+        img = apply_glitch(img, hull)    
     return img
+
+# -- HULL CREATION LOGIC 
 
 def get_fingertip_points(lmList) -> np.ndarray:
     numpy_lm_list = np.array(lmList)
@@ -48,6 +54,8 @@ def draw_prism_edges(img, left_points, right_points):
         p2 = tuple(p2.astype(int))
         cv2.line(img, p1, p2, color=(0, 0, 255), thickness=2)
     return img
+
+# -- APPLY FILTER LOGIC
 
 def apply_halftone(img, hull, grid_size=10):
     mask = np.zeros(img.shape[:2], dtype=np.uint8)
@@ -95,6 +103,37 @@ def apply_bitmap(img, hull, block_size=15):
     np.copyto(img, output, where=(mask[:, :, None]==255))
     return img
 
+def apply_ascii(img, hull, grid_size=12):
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [hull],255)
+    grey_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    output = np.full_like(img, fill_value=255, dtype=np.uint8)
+    palette = ['@', '#', 'S', '%', '?', '*', '+', ';', ':', ',', '.', ' ']
+    h, w = output.shape[:2]
+    for y in range(0, h, grid_size):
+        for x in range(0, w, grid_size):
+            if mask[y, x] > 0:
+                brightness = grey_img[y, x]
+                idx = int(np.interp(brightness, [0, 255], [0, len(palette)-1]))
+                cv2.putText(output, palette[idx], (x, y + grid_size), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0,0,0),2)
+    mask_3ch = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    img = np.where(mask_3ch > 0, output, img)
+    return img
+
+def apply_glitch(img, hull, intensity=20):
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [hull], 255)
+    b,g,r = cv2.split(img)
+    b = np.roll(b, np.random.randint(-intensity, intensity), axis=1)
+    g = np.roll(g, np.random.randint(-intensity, intensity), axis=1)
+    r = np.roll(r, np.random.randint(-intensity, intensity), axis=1)
+    output = cv2.merge([b, g, r])
+    mask_3ch = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    img = np.where(mask_3ch > 0, output, img)
+    return img
+
+# -- FACE DETECTION THREAD MANAGER (threaded for speed optimizing)
+   
 class FaceDetectorThread:
     def __init__(self, face_detector):
         self.face_detector = face_detector
@@ -128,6 +167,8 @@ class FaceDetectorThread:
     def stop(self):
         self.running = False
 
+
+# -- MAIN FN LOGIC
 cap = cv2.VideoCapture(0)
 detector = htm.handDetector()
 face_d = htm.faceDetector()
