@@ -3,14 +3,63 @@ import numpy as np
 import handtrackmod as htm
 import time
 import threading
+import math
 
-FILTERS = ['halftone', 'bitmap', 'ascii', 'glitch']
+FILTERS = ['halftone', 'bitmap', 'ascii', 'glitch', 'cosmos']
 current_filter=0
 last_wink_time = 0
 WINK_COOLDOWN = 1
 
+stars = []
+star_colors = [(239,239,239), (194,181,255), (74, 217,234)]
+
+# -- STAR CLASS
+
+class Star:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.vx = np.random.uniform(20, 25)
+        self.vy = np.random.uniform(-20, 20)
+        self.radius = np.random.randint(40,43)
+        index = np.random.randint(0, 3)
+        self.colorbgr = star_colors[index]
+        self.twinkle_phase = math.radians(np.random.uniform(0,360))
+        self.alpha = 255
+    
+    def update(self):
+        self.x +=self.vx
+        self.y +=self.vy
+        self.twinkle_phase+=math.radians(5)
+        self.alpha = int((np.sin(self.twinkle_phase) + 1) / 2 * 255)
+
+    def is_alive(self, max_x, mask):
+        if self.x>max_x:
+            return False
+        if mask[int(self.y), int(self.x)] == 0:
+            return False
+        return True
+    
+    def star_points(self, cx, cy, outer_r, inner_r, num_points=5):
+        points = []
+        for i in range(num_points * 2):
+            angle = math.radians(i * 180 / num_points - 90)
+            r = outer_r if i % 2 == 0 else inner_r
+            x = int(cx + r * math.cos(angle))
+            y = int(cy + r * math.sin(angle))
+            points.append([x, y])
+        return np.array(points, dtype=np.int32)
+    
+    def draw(self, img):
+        overlay = img.copy()
+        pts = self.star_points(self.x, self.y, self.radius * 3, self.radius)
+        cv2.fillPoly(overlay, [pts], self.colorbgr)
+        alpha = self.alpha / 255.0
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+    
+
 # -- APPLY FILTERS
-def apply_filter(img, hull, mode):
+def apply_filter(img, hull, mode, left_pts=None, right_pts = None):
     if mode == 'halftone':
         img = apply_halftone(img, hull)
     if mode == 'bitmap':
@@ -18,7 +67,9 @@ def apply_filter(img, hull, mode):
     if mode == 'ascii':
         img = apply_ascii(img, hull)
     if mode == 'glitch':
-        img = apply_glitch(img, hull)    
+        img = apply_glitch(img, hull)
+    if mode == 'cosmos':
+        img = apply_cosmos(img, hull, left_pts, right_pts)   
     return img
 
 # -- HULL CREATION LOGIC 
@@ -132,6 +183,25 @@ def apply_glitch(img, hull, intensity=20):
     img = np.where(mask_3ch > 0, output, img)
     return img
 
+def apply_cosmos(img, hull, left_pts, right_pts):
+    overlay = np.zeros_like(img)
+    mask = np.zeros(img.shape[:2], dtype=np.uint8)
+    cv2.fillPoly(mask, [hull], 255)
+    overlay[mask > 0] = [20, 10, 10]
+    cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+    left_x = np.min(left_pts[:, 0])
+    right_x = np.max(right_pts[:,0])
+    valid_ys = np.where(mask[:, int(left_x)] > 0)[0]
+    if len(valid_ys) >0 and len(stars) < 150:
+        for _ in range(2):
+            y = int(np.random.choice(valid_ys))
+            stars.append(Star(int(left_x), y))
+    for star in stars:
+        star.update()
+        star.draw(img)
+    stars[:] = [s for s in stars if s.is_alive(right_x, mask)]
+    return img
+
 # -- FACE DETECTION THREAD MANAGER (threaded for speed optimizing)
    
 class FaceDetectorThread:
@@ -195,7 +265,10 @@ while True:
         left_points = get_fingertip_points(left)
         right_points = get_fingertip_points(right)
         hull = get_prism_hull(left_points, right_points)
-        img = apply_filter(img, hull, FILTERS[current_filter])
+        if current_filter == 4:
+            img = apply_filter(img, hull, 'cosmos', left_points, right_points)
+        else:
+            img = apply_filter(img, hull, FILTERS[current_filter])
         #img = draw_prism_edges(img, left_points, right_points)
 
     cv2.imshow("Arthouse", img)
